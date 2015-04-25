@@ -517,9 +517,6 @@ class LdaModel(interfaces.TransformationABC):
         if gamma_threshold is None:
             gamma_threshold = self.gamma_threshold
 
-        # rho is the "speed" of updating; TODO try other fncs
-        rho = lambda: pow(offset + self.num_updates / self.chunksize, -decay)
-
         try:
             lencorpus = len(corpus)
         except:
@@ -552,7 +549,13 @@ class LdaModel(interfaces.TransformationABC):
             logger.warning("too few updates, training might not converge; consider "
                            "increasing the number of passes or iterations to improve accuracy")
 
-        for pass_ in xrange(passes):
+        # rho is the "speed" of updating; TODO try other fncs
+        # pass_ * num_updates handles increasing the starting t for each pass,
+        # while allowing it to "reset" on the first pass of each update
+        rho = lambda: pow(offset + (pass_ * self.num_updates) / self.chunksize, -decay)
+
+        for pass_ in xrange(1, passes + 1):
+            logger.info("RHO INFO AT PASS " + str(pass_) +": " + str(rho()))
             if self.dispatcher:
                 logger.info('initializing %s workers' % self.numworkers)
                 self.dispatcher.reset(self.state)
@@ -590,7 +593,7 @@ class LdaModel(interfaces.TransformationABC):
                         # distributed mode: wait for all workers to finish
                         logger.info("reached the end of input; now waiting for all remaining jobs to finish")
                         other = self.dispatcher.getstate()
-                    self.do_mstep(rho(), other)
+                    self.do_mstep(rho(), other, pass_ != 1)
                     del other # free up some mem
 
                     if self.dispatcher:
@@ -609,13 +612,13 @@ class LdaModel(interfaces.TransformationABC):
                     # distributed mode: wait for all workers to finish
                     logger.info("reached the end of input; now waiting for all remaining jobs to finish")
                     other = self.dispatcher.getstate()
-                self.do_mstep(rho(), other)
+                self.do_mstep(rho(), other, pass_ != 1)
                 del other
                 dirty = False
         #endfor entire corpus update
 
 
-    def do_mstep(self, rho, other):
+    def do_mstep(self, rho, other, extra_pass=False):
         """
         M step: use linear interpolation between the existing topics and
         collected sufficient statistics in `other` to update the topics.
@@ -630,7 +633,9 @@ class LdaModel(interfaces.TransformationABC):
         self.sync_state()
         self.print_topics(15) # print out some debug info at the end of each EM iteration
         logger.info("topic diff=%f, rho=%f" % (numpy.mean(numpy.abs(diff)), rho))
-        self.num_updates += other.numdocs
+        if not extra_pass:
+            # only update if this isn't an additional pass.
+            self.num_updates += other.numdocs
 
 
     def bound(self, corpus, gamma=None, subsample_ratio=1.0):
