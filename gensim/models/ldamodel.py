@@ -491,8 +491,6 @@ class LdaModel(interfaces.TransformationABC):
 
         """
         # use parameters given in constructor, unless user explicitly overrode them
-        if chunksize is None:
-            chunksize = self.chunksize
         if decay is None:
             decay = self.decay
         if offset is None:
@@ -516,6 +514,9 @@ class LdaModel(interfaces.TransformationABC):
         if lencorpus == 0:
             logger.warning("LdaModel.update() called with an empty corpus")
             return
+
+        if chunksize is None:
+            chunksize = min(lencorpus, self.chunksize)
 
         self.state.numdocs += lencorpus
 
@@ -544,7 +545,7 @@ class LdaModel(interfaces.TransformationABC):
         # pass_ + num_updates handles increasing the starting t for each pass,
         # while allowing it to "reset" on the first pass of each update
         def rho():
-            return pow(offset + ((pass_ + self.num_updates)), -decay)
+            return pow(offset + pass_ + (self.num_updates / chunksize), -decay)
 
         for pass_ in xrange(passes):
             if self.dispatcher:
@@ -628,7 +629,7 @@ class LdaModel(interfaces.TransformationABC):
 
         if not extra_pass:
             # only update if this isn't an additional pass
-            self.num_updates += 1
+            self.num_updates += other.numdocs
 
     def bound(self, corpus, gamma=None, subsample_ratio=1.0):
         """
