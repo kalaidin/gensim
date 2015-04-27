@@ -444,8 +444,8 @@ class LdaModel(interfaces.TransformationABC):
 
         dalpha = -(gradf - b) / q
 
-        if all(rho() * dalpha + self.alpha > 0):
-            self.alpha += rho() * dalpha
+        if all(rho * dalpha + self.alpha > 0):
+            self.alpha += rho * dalpha
         else:
             logger.warning("updated alpha not positive")
         logger.info("optimized alpha %s" % list(self.alpha))
@@ -541,13 +541,12 @@ class LdaModel(interfaces.TransformationABC):
                            "increasing the number of passes or iterations to improve accuracy")
 
         # rho is the "speed" of updating; TODO try other fncs
-        # pass_ * num_updates handles increasing the starting t for each pass,
+        # pass_ + num_updates handles increasing the starting t for each pass,
         # while allowing it to "reset" on the first pass of each update
         def rho():
-            return pow(offset + ((pass_ * self.num_updates) / self.chunksize),
-                       -decay)
+            return pow(offset + ((pass_ + self.num_updates)), -decay)
 
-        for pass_ in xrange(1, passes + 1):
+        for pass_ in xrange(passes):
             if self.dispatcher:
                 logger.info('initializing %s workers' % self.numworkers)
                 self.dispatcher.reset(self.state)
@@ -574,7 +573,7 @@ class LdaModel(interfaces.TransformationABC):
                     gammat = self.do_estep(chunk, other)
 
                     if self.optimize_alpha:
-                        self.update_alpha(gammat, rho)
+                        self.update_alpha(gammat, rho())
 
                 dirty = True
                 del chunk
@@ -585,7 +584,7 @@ class LdaModel(interfaces.TransformationABC):
                         # distributed mode: wait for all workers to finish
                         logger.info("reached the end of input; now waiting for all remaining jobs to finish")
                         other = self.dispatcher.getstate()
-                    self.do_mstep(rho(), other, pass_ != 1)
+                    self.do_mstep(rho(), other, pass_ > 0)
                     del other  # frees up memory
 
                     if self.dispatcher:
@@ -604,7 +603,7 @@ class LdaModel(interfaces.TransformationABC):
                     # distributed mode: wait for all workers to finish
                     logger.info("reached the end of input; now waiting for all remaining jobs to finish")
                     other = self.dispatcher.getstate()
-                self.do_mstep(rho(), other, pass_ != 1)
+                self.do_mstep(rho(), other, pass_ > 0)
                 del other
                 dirty = False
         # endfor entire corpus update
@@ -624,12 +623,12 @@ class LdaModel(interfaces.TransformationABC):
         self.sync_state()
 
         # print out some debug info at the end of each EM iteration
-        self.print_topics(15)
+        self.print_topics(5)
         logger.info("topic diff=%f, rho=%f" % (numpy.mean(numpy.abs(diff)), rho))
 
         if not extra_pass:
             # only update if this isn't an additional pass
-            self.num_updates += other.numdocs
+            self.num_updates += 1
 
     def bound(self, corpus, gamma=None, subsample_ratio=1.0):
         """
